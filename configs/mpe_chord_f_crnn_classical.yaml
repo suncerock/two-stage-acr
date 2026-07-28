@@ -1,0 +1,110 @@
+seed: 42
+train: true
+test: true
+optimized_metric: null
+ckpt_path: null
+paths:
+  dataset_dir: /Users/yid77zw/datasets
+  log_dir: logs/mpe_chord_f_crnn_classical
+  output_dir: ${paths.log_dir}
+
+data:
+  _target_: src.data.datamodule.ACRDatamodule
+
+  datasets:
+    swd:
+      label_folder: ${paths.dataset_dir}/Schubert_Winterreise_Dataset_v2-1/02_Annotations/ann_audio_chord
+      mpe_output_feature_folder: ${paths.dataset_dir}/Schubert_Winterreise_Dataset_v2-1/99_Features/classic_pitch_output_min24_fps10
+    bpsd:
+      label_folder: ${paths.dataset_dir}/Beethoven_Piano_Sonata_Dataset_v2/2_Annotations/ann_audio_chord
+      mpe_output_feature_folder: ${paths.dataset_dir}/Beethoven_Piano_Sonata_Dataset_v2/99_Features/classic_pitch_output_min24_fps10
+    bsqd:
+      label_folder: ${paths.dataset_dir}/Beethoven_StringQuartets_AudioLabs/ann_audio_chord
+      mpe_output_feature_folder: ${paths.dataset_dir}/Beethoven_StringQuartets_AudioLabs/99_Features/classic_pitch_output_min24_fps10
+
+  split_config: configs/example_swd_bpsd_bsqd.json
+
+  feature_fps: 10
+  label_config: ${..model.label_config}
+  seg_length: 10.0
+  seg_shift_length: 1.0
+
+  batch_size: 64
+  num_workers: 0
+
+model:
+  _target_: src.models.model.ACRModel
+
+  feature:
+    _target_: src.models.features.PitchReprShift
+    bins_per_octave: 12
+    num_octaves: 6
+
+  backbone:
+    _target_: src.models.backbone.crnn.CRNN
+    input_channels: 1
+    num_channels: 32
+    freq_dim: 72
+    dropout: 0.2
+    num_rnn_layers: 4
+
+  loss_fn:
+    _target_: src.models.losses.chord_losses.ChordLoss
+    ce_label_smoothing: 0.1
+
+  optim_cfg:
+    optimizer:
+      lr: 0.00005
+      weight_decay: 0.0001
+
+    scheduler:
+      T_max: 30
+      warmup_epochs: 5
+      eta_min: 1e-6
+
+  mpe_model: null  # use pre-extracted MPE features for finetuning, no need to load MPE model
+  mpe_stage: null
+
+  backbone_stage:
+    freeze: false
+    checkpoint_path: ckpt/pretrained_chord.ckpt
+
+  model_input_key: x_mpe_output
+
+  label_config:
+    _target_: src.data.dataset.ChordLabelConfig.mcfee_structured
+    harte_vocab: tetrads
+
+  pitch_informed_rbp: false
+  rbp_informed_chord: true
+
+  compile: false
+
+trainer:
+  _target_: lightning.Trainer
+  accelerator: mps
+  devices: 1
+  max_epochs: 35
+  precision: 16-mixed
+  check_val_every_n_epoch: 1
+
+callbacks:
+  model_summary:
+    _target_: lightning.pytorch.callbacks.RichModelSummary
+    max_depth: -1
+  model_checkpoint:
+    _target_: lightning.pytorch.callbacks.ModelCheckpoint
+    dirpath: ${paths.log_dir}/checkpoints
+    filename: epoch={epoch}-loss={loss/val:.4f}
+    monitor: loss/val
+    mode: min
+    save_last: true
+    auto_insert_metric_name: False # when True, the checkpoints filenames will contain the metric name
+    save_weights_only: False # if True, then only the model’s weights will be saved
+
+logger:
+  csv:
+    _target_: lightning.pytorch.loggers.csv_logs.CSVLogger
+    save_dir: ${paths.log_dir}
+    name: "csv/"
+    prefix: ""

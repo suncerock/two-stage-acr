@@ -1,0 +1,35 @@
+{
+  "train": {
+    "swd": [
+      "Schubert_D911-01_AL98"
+    ],
+    "bpsd": [
+      "Beethoven_Op002No1-01_JJ90"
+    ],
+    "bsqd": [
+      "Beethoven_Op018No1-01_AlbanBergQuartet_WC"
+    ]
+  },
+  "val": {
+    "swd": [
+      "Schubert_D911-01_AL98"
+    ],
+    "bpsd": [
+      "Beethoven_Op002No1-01_JJ90"
+    ],
+    "bsqd": [
+      "Beethoven_Op018No1-01_AlbanBergQuartet_WC"
+    ]
+  },
+  "test": {
+    "swd": [
+      "Schubert_D911-01_AL98"
+    ],
+    "bpsd": [
+      "Beethoven_Op002No1-01_JJ90"
+    ],
+    "bsqd": [
+      "Beethoven_Op018No1-01_AlbanBergQuartet_WC"
+    ]
+  }
+}
