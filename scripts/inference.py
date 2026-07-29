@@ -41,7 +41,7 @@ HCQT_BINS_PER_OCTAVE = 36
 HCQT_N_BINS = 216
 HCQT_HARMONICS = [0.5, 1, 2, 3, 4, 5]
 HCQT_SOURCE_FPS = HCQT_SR / HCQT_HOP_LENGTH
-DEFAULT_MPE_CKPT = _REPO_ROOT / "ckpt" / "mpe.ckpt"
+DEFAULT_MPE_CKPT = _REPO_ROOT / "ckpt" / "pretrained_mpe.ckpt"
 FPS = 10.0
 DECODE_PITCH_THRESHOLD = 0.4
 
@@ -156,6 +156,7 @@ def run_inference(
     model: ACRModel,
     audio_path: Path,
     output_path: Path,
+    save_soft_output: bool = False,
 ) -> None:
     if model.mpe_model is None:
         raise ValueError("This inference script requires a two-stage model with an MPE front-end.")
@@ -174,7 +175,8 @@ def run_inference(
         predictions["pc"] = predictions.pop("pitch").T
 
     npz_path, lab_path = _resolve_output_paths(output_path)
-    np.savez_compressed(npz_path, **predictions)
+    if save_soft_output:
+        np.savez_compressed(npz_path, **predictions)
 
     if "chord" in predictions:
         vocab = model.label_config.harte_vocab
@@ -201,7 +203,8 @@ def run_inference(
             f.write(f"{start:.6f}\t{end:.6f}\t{label}\n")
 
     print(f"Audio path    : {audio_path}")
-    print(f"NPZ output    : {npz_path}")
+    if save_soft_output:
+        print(f"NPZ output   : {npz_path}")
     print(f"LAB output    : {lab_path}")
     print("Done.")
 
@@ -236,6 +239,11 @@ def main() -> None:
         default=DEFAULT_MPE_CKPT,
         help="Path to the shared MPE frontend checkpoint (.ckpt).",
     )
+    parser.add_argument(
+        "--soft-output",
+        action="store_true",
+        help="Save .npz soft outputs in addition to .lab decoded segments.",
+    )
     args = parser.parse_args()
 
     chord_ckpt_path = Path(f"ckpt/{args.backbone_type}_{args.model_type}.ckpt")
@@ -259,6 +267,7 @@ def main() -> None:
         model=model,
         audio_path=args.audio_path,
         output_path=args.output_path,
+        save_soft_output=args.soft_output,
     )
 
 

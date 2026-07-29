@@ -33,26 +33,23 @@ Or download them manually and put them in the `ckpt/` folder.
 Run inference on one audio file:
 
 ```bash
-python scripts/inference.py \
-  --audio-path /path/to/audio.wav \
-  --output-path /path/to/output/prefix \
-  --backbone-type crnn \
-  --model-type classical
+python scripts/inference.py --audio-path /path/to/audio.wav --output-path /path/to/output/prefix \
+  --backbone-type crnn --model-type classical [--soft-output]
 ```
 
 The script writes:
 
-- `/path/to/output/prefix.npz`
 - `/path/to/output/prefix.lab`
+- `/path/to/output/prefix.npz` (if --soft-output is set)
 
 ## Notes
 
 - `--model-type` selects `classical` or `pop`.
 - `--backbone-type` selects `crnn` or `conformer`.
 - The HCQT frontend is computed inside the inference script from raw audio.
-- `.npz` file contains keys `root`, `bass`, and `pc` storing frame-wise predictions (shape `12 x T`, unnormalized)
-- For `crnn`, the `.npz` file also contains `chord` with frame-wise chord logits (shape `192 x T`, unnormalized, 12 * 16 qualities can be found in [src/data/utils.py](src/data/utils.py))
 - `.lab` file is the MIREX-style files with start time, end time, and chord symbols for each predicted segments
+- `--soft-output` is false by default. If set to true, save a `.npz` file that contains keys `root`, `bass`, and `pc` storing frame-wise predictions (shape `12 x T`, unnormalized)
+- For `crnn`, the `.npz` file also contains `chord` with frame-wise chord logits (shape `192 x T`, unnormalized, 12 * 16 qualities can be found in [src/data/utils.py](src/data/utils.py))
 - Does not include `N` (no-chord) for now, coming soon...
 
 ## Training
