@@ -2,11 +2,14 @@
 
 Inference and example training code accompanying the paper "Revisiting Two-Stage Audio Chord Recognition in the Deep Learning Era: Leveraging Multi-Pitch Estimation and Symbolic Pretraining", in ISMIR 2026.
 
+This repo is kept for reproducibility and research purposes. For a general-purpose, best-performing harmony recognition model, refer to [this repo](https://github.com/suncerock/automatic-harmony-analyzer), which contains also a demo page and will be actively maintained.
+
 ## Installation
 
+The project uses Python 3.10. Install the dependencies in your environment with:
+
 ```bash
-conda env create -f environment.yaml
-conda activate two-stage-acr
+pip install -r requirements.txt
 ```
 
 ## Supported checkpoints
