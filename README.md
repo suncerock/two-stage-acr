@@ -55,6 +55,11 @@ The script writes:
 - For `crnn`, the `.npz` file also contains `chord` with frame-wise chord logits (shape `192 x T`, unnormalized, 12 * 16 qualities can be found in [src/data/utils.py](src/data/utils.py))
 - Does not include `N` (no-chord) for now, coming soon...
 
+## Datasets
+The following datasets are used for training the chord recognition module and therefore should not serve as test data:
+- Classical: SWD, BPSD, BSQD (Suggested test dataset: RUBATO, ...)
+- Pop: Billboard, Isophonics (Suggested test dataset: RWC-Pop, USPop, ...)
+
 ## Training
 
 An example training (fine-tuning) config is at [configs/mpe_chord_f_crnn_classical.yaml](configs/mpe_chord_f_crnn_classical.yaml).
