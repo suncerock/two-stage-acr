@@ -106,8 +106,9 @@ class ChordAccuracy(Metric):
 
 
 class ChordEval(Metric):
-    def __init__(self):
+    def __init__(self, include_no_chord: bool = False):
         super().__init__()
+        self.include_no_chord = include_no_chord
 
         for rules in ["root", "thirds", "triads", "sevenths", "tetrads", "majmin", "mirex"]:
             self.add_state(rules, default=torch.tensor(0.0), dist_reduce_fx="sum")
@@ -138,10 +139,12 @@ class ChordEval(Metric):
             Predicted chord strings for a single track/segment.
         y : list of str
             Ground-truth chord strings for a single track/segment.
-            Frames where the ground-truth is ``'N'`` or ``'X'`` are ignored.
+            Frames where the ground-truth is ``'X'`` are ignored, as are ``'N'``
+            frames unless ``include_no_chord`` is set.
         """
-        y_hat_masked = [p for p, t in zip(y_hat, y) if t not in ('N', 'X')]
-        y_masked = [t for t in y if t not in ('N', 'X')]
+        ignored = ('X',) if self.include_no_chord else ('N', 'X')
+        y_hat_masked = [p for p, t in zip(y_hat, y) if t not in ignored]
+        y_masked = [t for t in y if t not in ignored]
 
         if y_masked:
             self._accumulate_strings(y_hat_masked, y_masked)

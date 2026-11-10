@@ -34,6 +34,8 @@ class ChordLabelConfig:
 
     require_harte: bool = False
     harte_vocab: str = "tetrads"
+    # Add an explicit N class: index 12 for root/bass, last index for the Harte chord head.
+    include_no_chord: bool = False
 
     require_rbp: bool = False
     rbp_enforce_root: bool = False
@@ -41,16 +43,21 @@ class ChordLabelConfig:
     rbp_include_extended: bool = False
 
     @classmethod
-    def rbp_only(cls) -> "ChordLabelConfig":
-        return cls(require_rbp=True)
+    def rbp_only(cls, include_no_chord: bool = False) -> "ChordLabelConfig":
+        return cls(require_rbp=True, include_no_chord=include_no_chord)
 
     @classmethod
-    def mcfee_structured(cls, harte_vocab: str = "tetrads") -> "ChordLabelConfig":
-        return cls(require_harte=True, harte_vocab=harte_vocab, require_rbp=True)
+    def mcfee_structured(cls, harte_vocab: str = "tetrads", include_no_chord: bool = False) -> "ChordLabelConfig":
+        return cls(
+            require_harte=True,
+            harte_vocab=harte_vocab,
+            require_rbp=True,
+            include_no_chord=include_no_chord,
+        )
 
     @classmethod
-    def poltronieri_structured(cls) -> "ChordLabelConfig":
-        return cls.rbp_only()
+    def poltronieri_structured(cls, include_no_chord: bool = False) -> "ChordLabelConfig":
+        return cls.rbp_only(include_no_chord=include_no_chord)
 
 class ChordSingleTrackDataset(Data.Dataset):
     def __init__(
@@ -130,6 +137,7 @@ class ChordSingleTrackDataset(Data.Dataset):
         self.label_config = label_config or ChordLabelConfig()
         self.require_harte = self.label_config.require_harte
         self.require_rbp = self.label_config.require_rbp
+        self.include_no_chord = self.label_config.include_no_chord
         self.test = test
 
         self.feature_seg_frames = int(feature_fps * seg_length) if seg_length > 0.0 else -1
@@ -231,8 +239,10 @@ class ChordSingleTrackDataset(Data.Dataset):
         valid_mask = np.zeros(self.acr_frame_count, dtype=bool)
 
         for _, row in self.label_df.iterrows():
+            if row[label_entry[self.dataset]] == "X":
+                continue
             chord = Hchord(row[label_entry[self.dataset]])
-            if chord.root is None:
+            if chord.root is None and not self.include_no_chord:
                 continue
             frame_mask = (
                 (time_frame - 0.5 / self.feature_fps > row["start"]) &
@@ -248,28 +258,56 @@ class ChordSingleTrackDataset(Data.Dataset):
 
         labels = dict()
 
+        if self.include_no_chord:
+            # Regions before the first and after the last annotation are no-chord
+            first_start = float(self.label_df["start"].min()) if not self.label_df.empty else 0.0
+            last_end = float(self.label_df["end"].max()) if not self.label_df.empty else 0.0
+            track_end = self.acr_frame_count / self.feature_fps
+            boundary_rows = []
+            if first_start > 0.0:
+                boundary_rows.append({"start": 0.0, "end": first_start, label_entry[self.dataset]: "N"})
+            if last_end < track_end:
+                boundary_rows.append({"start": last_end, "end": track_end, label_entry[self.dataset]: "N"})
+            if boundary_rows:
+                self.label_df = pd.concat([self.label_df, pd.DataFrame(boundary_rows)], ignore_index=True)
+                self.label_df = self.label_df.sort_values(["start", "end"], kind="stable").reset_index(drop=True)
+
         if self.require_harte:
             chord_labels = -1 * np.ones(len(time_frame), dtype=np.int64)
             for _, row in self.label_df.iterrows():
+                if row[label_entry[self.dataset]] == "X":
+                    continue
 
                 chord = Hchord(row[label_entry[self.dataset]])
 
-                chord_labels[(time_frame - 0.5 / self.feature_fps > row["start"]) & (time_frame + 0.5 / self.feature_fps < row["end"])] = categorize_hchord(chord, vocab=self.label_config.harte_vocab)
+                chord_labels[(time_frame - 0.5 / self.feature_fps > row["start"]) & (time_frame + 0.5 / self.feature_fps < row["end"])] = categorize_hchord(
+                    chord,
+                    vocab=self.label_config.harte_vocab,
+                    include_no_chord=self.include_no_chord,
+                )
                 
             labels["y_chord"] = chord_labels
         
         if self.require_rbp:
+            # Frames without a valid label (X, or N when disabled) keep -1 everywhere
             root_labels = -1 * np.ones(len(time_frame), dtype=np.int64)
-            pitch_labels = np.zeros((len(time_frame), 12), dtype=np.float32)
+            pitch_labels = -1 * np.ones((len(time_frame), 12), dtype=np.float32)
             bass_labels = -1 * np.ones(len(time_frame), dtype=np.int64)
 
             for _, row in self.label_df.iterrows():
-                    
-                root, bitmap, bass = Hchord(row[label_entry[self.dataset]]).encode(
+                if row[label_entry[self.dataset]] == "X":
+                    continue
+
+                chord = Hchord(row[label_entry[self.dataset]])
+                if chord.root is None and not self.include_no_chord:
+                    continue
+
+                root, bitmap, bass = chord.encode(
                     absolute=True,
                     enforce_root=self.label_config.rbp_enforce_root,
                     enforce_bass=self.label_config.rbp_enforce_bass,
-                    include_extended=self.label_config.rbp_include_extended
+                    include_extended=self.label_config.rbp_include_extended,
+                    include_no_chord=self.include_no_chord,
                 )
 
                 root_labels[(time_frame - 0.5 / self.feature_fps > row["start"]) & (time_frame + 0.5 / self.feature_fps < row["end"])] = root
@@ -281,8 +319,11 @@ class ChordSingleTrackDataset(Data.Dataset):
             labels["y_bass"] = bass_labels
 
         if self.test:
-            chord_str_labels: List[str] = ["N"] * len(time_frame)
+            # Unannotated frames are "X" and ignored by evaluation
+            chord_str_labels: List[str] = ["X"] * len(time_frame)
             for _, row in self.label_df.iterrows():
+                if row[label_entry[self.dataset]] == "X":
+                    continue
                 chord_str = Hchord(row[label_entry[self.dataset]]).export_string()
                 frame_mask = (
                     (time_frame - 0.5 / self.feature_fps > row["start"]) &

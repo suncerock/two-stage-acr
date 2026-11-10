@@ -3,6 +3,8 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from src.data.utils import num_harte_classes
+
 
 class HCQTShiftAndNormalize(nn.Module):
     def __init__(self, bins_per_octave=36, num_octaves=6, normalize: bool = True, base_shift: Optional[int] = 0, min_shift: Optional[int] = 0, max_shift: Optional[int] = 11, db_instead_of_log_compression: bool = False):
@@ -43,15 +45,29 @@ class HCQTShiftAndNormalize(nn.Module):
             batch_new = {input_key: s}
 
             if label_config.require_harte and "y_chord" in batch:
-                y_root = torch.where(batch["y_chord"] != -1, (batch["y_chord"] % 12 - shift_tensor) % 12, -1)
-                y_quality = torch.where(batch["y_chord"] != -1, batch["y_chord"] // 12, -1)
-                y_chord = torch.where(batch["y_chord"] != -1, y_root + y_quality * 12, -1)
+                # The no-chord class is transposition invariant and must not be shifted
+                shift_mask = batch["y_chord"] != -1
+                if label_config.include_no_chord:
+                    no_chord_index = num_harte_classes(label_config.harte_vocab, include_no_chord=True) - 1
+                    no_chord_mask = batch["y_chord"] == no_chord_index
+                    shift_mask = shift_mask & ~no_chord_mask
+                y_root = torch.where(shift_mask, (batch["y_chord"] % 12 - shift_tensor) % 12, -1)
+                y_quality = torch.where(shift_mask, batch["y_chord"] // 12, -1)
+                y_chord = torch.where(shift_mask, y_root + y_quality * 12, -1)
+                if label_config.include_no_chord:
+                    y_chord = torch.where(no_chord_mask, no_chord_index, y_chord)
                 batch_new["y_chord"] = y_chord
             if label_config.require_rbp and "y_root" in batch and "y_pitch" in batch and "y_bass" in batch:
-                y_root = torch.where(batch["y_root"] != -1, (batch["y_root"] - shift_tensor) % 12, -1)
+                # Class 12 (no-chord) is transposition invariant and must not be shifted
+                root_shift_mask = batch["y_root"] != -1
+                bass_shift_mask = batch["y_bass"] != -1
+                if label_config.include_no_chord:
+                    root_shift_mask = root_shift_mask & (batch["y_root"] != 12)
+                    bass_shift_mask = bass_shift_mask & (batch["y_bass"] != 12)
+                y_root = torch.where(root_shift_mask, (batch["y_root"] - shift_tensor) % 12, batch["y_root"])
                 batch_new["y_root"] = y_root
 
-                y_bass = torch.where(batch["y_bass"] != -1, (batch["y_bass"] - shift_tensor) % 12, -1)
+                y_bass = torch.where(bass_shift_mask, (batch["y_bass"] - shift_tensor) % 12, batch["y_bass"])
 
                 idx = torch.arange(12, device=batch["y_pitch"].device).view(1, 1, 12)
                 shifted_idx = (idx + shift_tensor.unsqueeze(-1)) % 12

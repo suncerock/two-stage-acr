@@ -30,7 +30,7 @@ INTERVAL_MAP: Dict[int, str] = {
 PITCH_CLASSES: List[str] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
-def convert_harte_index_to_hchord(index: int, harte_vocab: str) -> Hchord:
+def convert_harte_index_to_hchord(index: int, harte_vocab: str, include_no_chord: bool = False) -> Hchord:
     """Convert categorized Harte index to harte chord symbol based on the specified vocabulary.
     This assumes enharmonic equivalence because index does not include enharmonic distinctions.
 
@@ -40,6 +40,8 @@ def convert_harte_index_to_hchord(index: int, harte_vocab: str) -> Hchord:
         The categorized Harte index to convert.
     harte_vocab: str
         The harte vocabulary used (e.g., "triads", "tetrads").
+    include_no_chord: bool
+        If True, the last index (``len(vocab) * 12``) denotes no-chord.
 
     Returns:
     -------
@@ -54,6 +56,9 @@ def convert_harte_index_to_hchord(index: int, harte_vocab: str) -> Hchord:
         quality_list = list(ALL_TETRADS_INTERVALS.keys())
     else:
         raise ValueError(f"Unsupported harte vocabulary: {harte_vocab}")
+
+    if include_no_chord and index == len(quality_list) * 12:
+        return Hchord("N")
 
     root_index = index % 12
     quality_index = index // 12
@@ -115,16 +120,17 @@ def decode_rbp_sequence(
     pitch_logits: np.ndarray,
     bass_logits: np.ndarray,
     pitch_threshold: float = 0.4,
+    include_no_chord: bool = False,
 ) -> List[str]:
     """Decode a batch of RBP model outputs into sequences of :class:`Hchord`.
 
     Parameters
     ----------
-    root_logits : Tensor of shape ``(12, T)``
-        Raw root logits.
+    root_logits : Tensor of shape ``(12, T)`` (``(13, T)`` if ``include_no_chord``)
+        Raw root logits; index 12 is no-chord when ``include_no_chord``.
     pitch_logits : Tensor of shape ``(T, 12)``
         Raw pitch-class logits; sigmoid + threshold applied to binarise.
-    bass_logits : Tensor of shape ``(12, T)``
+    bass_logits : Tensor of shape ``(12, T)`` (``(13, T)`` if ``include_no_chord``)
         Raw bass logits.
     pitch_threshold : float
         Sigmoid threshold for binarising pitch logits (default ``0.4``).
@@ -138,12 +144,20 @@ def decode_rbp_sequence(
     bass_pred = bass_logits.argmax(axis=0)
     pitch_pred = (pitch_logits > pitch_threshold).astype(int)
 
+    no_chord_index = 12 if include_no_chord else -1
+
     seq: List[str] = []
     for t in range(len(root_pred)):
+        if int(root_pred[t]) == no_chord_index:
+            seq.append("N")
+            continue
+        bass_idx = int(bass_pred[t])
+        if bass_idx == no_chord_index:
+            bass_idx = int(root_pred[t])  # bass predicted as N but root is a chord: fall back to root
         chord = decode_rbp_to_hchord_str(
             root_idx=int(root_pred[t]),
             pitch_bitmap=pitch_pred[t],
-            bass_idx=int(bass_pred[t]),
+            bass_idx=bass_idx,
         )
         seq.append(chord)
 

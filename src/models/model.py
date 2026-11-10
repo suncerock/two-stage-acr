@@ -10,7 +10,7 @@ from lightning import LightningModule
 
 from src.data.dataset import ChordLabelConfig
 from src.data.datamodule import coerce_label_config
-from src.data.utils import ALL_TETRADS_INTERVALS, ALL_TRIADS_INTERVALS
+from src.data.utils import ALL_TETRADS_INTERVALS, ALL_TRIADS_INTERVALS, num_harte_classes
 from src.models.eval import ChordEval, ChordAccuracy, RBPEval
 from src.models.decoder import decode_rbp_sequence, convert_harte_index_to_hchord
 
@@ -35,13 +35,14 @@ class RBPInformedChordHead(nn.Module):
     feature_dim : int
         Dimensionality of the backbone output embedding.
     """
-    def __init__(self, feature_dim: int, num_classes: int) -> None:
+    def __init__(self, feature_dim: int, num_classes: int, include_no_chord: bool = False) -> None:
         super().__init__()
         self.num_classes = num_classes
-        self.root_head = nn.Linear(feature_dim, 12)
-        self.bass_head = nn.Linear(feature_dim, 12)
+        num_rb_classes = 12 + int(include_no_chord)
+        self.root_head = nn.Linear(feature_dim, num_rb_classes)
+        self.bass_head = nn.Linear(feature_dim, num_rb_classes)
         self.pitch_head = nn.Linear(feature_dim, 12)
-        self.chord_head = nn.Linear(feature_dim + 12 + 12 + 12, num_classes)
+        self.chord_head = nn.Linear(feature_dim + num_rb_classes + num_rb_classes + 12, num_classes)
 
     def forward(self, embedding: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
@@ -53,14 +54,14 @@ class RBPInformedChordHead(nn.Module):
         -------
         chord_logits : (N, num_classes, T) - permuted to match ACRModel convention
         """
-        root_logits = self.root_head(embedding)  # (N, T, 12)
-        bass_logits = self.bass_head(embedding)  # (N, T, 12)
+        root_logits = self.root_head(embedding)  # (N, T, 12(+1))
+        bass_logits = self.bass_head(embedding)  # (N, T, 12(+1))
         pitch_logits = self.pitch_head(embedding)  # (N, T, 12)
 
         fused = torch.cat([embedding, root_logits, bass_logits, pitch_logits], dim=-1)  # (N, T, C+12+12+12)
         chord_logits = self.chord_head(fused).permute(0, 2, 1)  # (N, num_classes, T)
-        root_logits = root_logits.permute(0, 2, 1)   # (N, 12, T)
-        bass_logits = bass_logits.permute(0, 2, 1)   # (N, 12, T)
+        root_logits = root_logits.permute(0, 2, 1)   # (N, 12(+1), T)
+        bass_logits = bass_logits.permute(0, 2, 1)   # (N, 12(+1), T)
 
         return dict(chord=chord_logits, root=root_logits, bass=bass_logits, pitch=pitch_logits)
 
@@ -83,7 +84,7 @@ class PitchInformedRBPHead(nn.Module):
         Dropout probability inside the fusion MLP.
     """
 
-    def __init__(self, feature_dim: int, fusion_dropout: float = 0.1) -> None:
+    def __init__(self, feature_dim: int, fusion_dropout: float = 0.1, include_no_chord: bool = False) -> None:
         super().__init__()
 
         # Primary pitch-class prediction (12 binary logits)
@@ -97,7 +98,7 @@ class PitchInformedRBPHead(nn.Module):
             nn.GELU(),
             nn.Dropout(fusion_dropout),
         )
-        self.root = nn.Linear(feature_dim, 12)
+        self.root = nn.Linear(feature_dim, 12 + int(include_no_chord))
 
         self.bass_fusion = nn.Sequential(
             nn.Linear(fused_dim, feature_dim),
@@ -105,7 +106,7 @@ class PitchInformedRBPHead(nn.Module):
             nn.GELU(),
             nn.Dropout(fusion_dropout),
         )
-        self.bass = nn.Linear(feature_dim, 12)
+        self.bass = nn.Linear(feature_dim, 12 + int(include_no_chord))
 
     def forward(self, embedding: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
@@ -122,8 +123,8 @@ class PitchInformedRBPHead(nn.Module):
         pitch_logits = self.pitch(embedding)                            # (N, T, 12)
 
         fused = torch.cat([embedding, pitch_logits], dim=-1)            # (N, T, C+12)
-        root_logits = self.root(self.root_fusion(fused)).permute(0, 2, 1)  # (N, 12, T)
-        bass_logits = self.bass(self.bass_fusion(fused)).permute(0, 2, 1)  # (N, 12, T)
+        root_logits = self.root(self.root_fusion(fused)).permute(0, 2, 1)  # (N, 12(+1), T)
+        bass_logits = self.bass(self.bass_fusion(fused)).permute(0, 2, 1)  # (N, 12(+1), T)
 
         return dict(pitch=pitch_logits, root=root_logits, bass=bass_logits)
 
@@ -346,7 +347,11 @@ class ACRModel(LightningModule):
             target_strings: List[str] = targets["hchord_str"][0]  # (T,) for batch-size-1 test
             pred_indices = outputs["chord"].argmax(dim=1)[0].cpu().int().numpy()  # (T,)
             pred_strings: List[str] = [
-                convert_harte_index_to_hchord(i, self.label_config.harte_vocab).export_string()
+                convert_harte_index_to_hchord(
+                    i,
+                    self.label_config.harte_vocab,
+                    include_no_chord=self.label_config.include_no_chord,
+                ).export_string()
                 for i in pred_indices
             ]
             self.test_chord_eval.update(pred_strings, target_strings)
@@ -361,6 +366,7 @@ class ACRModel(LightningModule):
                 root_logits=outputs["root"][0].cpu().float().numpy(),
                 pitch_logits=torch.sigmoid(outputs["pitch"][0]).cpu().float().numpy(),
                 bass_logits=outputs["bass"][0].cpu().float().numpy(),
+                include_no_chord=self.label_config.include_no_chord,
             )
             self.test_rbp_chord_eval.update(pred_strings, target_strings)
 
@@ -410,11 +416,15 @@ class ACRModel(LightningModule):
 
         if self.pitch_informed_rbp:
             assert self.label_config.require_rbp
-            self.heads = PitchInformedRBPHead(feature_dim)
+            self.heads = PitchInformedRBPHead(feature_dim, include_no_chord=self.label_config.include_no_chord)
         elif self.rbp_informed_chord:
             assert self.label_config.require_harte and self.label_config.require_rbp
-            num_classes = HARTE_CLASS_FACTORS[self.label_config.harte_vocab] * 12
-            self.heads = RBPInformedChordHead(feature_dim, num_classes=num_classes)
+            num_classes = num_harte_classes(self.label_config.harte_vocab, self.label_config.include_no_chord)
+            self.heads = RBPInformedChordHead(
+                feature_dim,
+                num_classes=num_classes,
+                include_no_chord=self.label_config.include_no_chord,
+            )
         else:
             raise ValueError("Model must enable either pitch_informed_rbp or rbp_informed_chord.")
 
@@ -422,17 +432,23 @@ class ACRModel(LightningModule):
             self.train_chord_acc = ChordAccuracy()
             self.val_chord_acc = ChordAccuracy()
             self.test_chord_acc = ChordAccuracy()
-            self.test_chord_eval = ChordEval()
+            self.test_chord_eval = ChordEval(include_no_chord=self.label_config.include_no_chord)
 
         if self.label_config.require_rbp:
             self.train_structured_eval  = RBPEval()
             self.val_structured_eval  = RBPEval()
             self.test_structured_eval = RBPEval()
-            self.test_rbp_chord_eval = ChordEval()
+            self.test_rbp_chord_eval = ChordEval(include_no_chord=self.label_config.include_no_chord)
 
         # Apply any backbone-stage heads weights that were stashed before heads existed
         if getattr(self, "_pending_heads_sd", None):
-            missing, unexpected = self.heads.load_state_dict(self._pending_heads_sd, strict=False)
+            # Heads trained with a different class count (e.g. without N) cannot be reused
+            head_shapes = {k: v.shape for k, v in self.heads.state_dict().items()}
+            skipped = [k for k, v in self._pending_heads_sd.items() if k in head_shapes and v.shape != head_shapes[k]]
+            if skipped:
+                print(f"Skipping heads weights with mismatched shapes (re-initialized): {skipped}")
+            pending = {k: v for k, v in self._pending_heads_sd.items() if k not in skipped}
+            missing, unexpected = self.heads.load_state_dict(pending, strict=False)
             if missing or unexpected:
                 print(
                     f"Heads checkpoint load mismatch. "

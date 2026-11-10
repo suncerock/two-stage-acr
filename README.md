@@ -1,6 +1,7 @@
 # Two-Stage ACR
 
-Inference and example training code accompanying the paper "Revisiting Two-Stage Audio Chord Recognition in the Deep Learning Era: Leveraging Multi-Pitch Estimation and Symbolic Pretraining", in ISMIR 2026.
+Inference and example training code accompanying the paper
+> "Revisiting Two-Stage Audio Chord Recognition in the Deep Learning Era: Leveraging Multi-Pitch Estimation and Symbolic Pretraining", in ISMIR 2026.
 
 This repo is kept for reproducibility and research purposes. For a general-purpose, best-performing harmony recognition model, refer to [this repo](https://github.com/suncerock/automatic-harmony-analyzer), which contains also a demo page and will be actively maintained.
 
@@ -21,15 +22,13 @@ The repo supports inference with the four chord-model combinations:
 - `conformer` + `classical`
 - `conformer` + `pop`
 
-The MPE frontend checkpoint is shared by all four models.
+The MPE frontend checkpoint is shared by all four models. Each model also has a `_withN` variant trained with an explicit no-chord class (see `--include-no-chord` below).
 
-The checkpoints are hosted on Zenodo and can be downloaded via the following command:
+The checkpoints are hosted on [Zenodo](https://zenodo.org/records/24103648) and can be downloaded on any platform with:
 ```bash
-for n in "pretrained_mpe" "pretrained_chord" "crnn_pop" "conformer_pop" "crnn_classical" "conformer_classical"; do
-    wget "https://zenodo.org/record/21644912/files/$n.ckpt" -P ckpt/
-done
+python scripts/download_checkpoints.py
 ```
-Or download them manually and put them in the `ckpt/` folder.
+Use `--only crnn_classical pretrained_mpe` to download a subset. Or download them manually and put them in the `ckpt/` folder.
 
 ## Inference
 
@@ -37,7 +36,7 @@ Run inference on one audio file:
 
 ```bash
 python scripts/inference.py --audio-path /path/to/audio.wav --output-path /path/to/output/prefix \
-  --backbone-type crnn --model-type classical [--soft-output]
+  --backbone-type crnn --model-type classical [--include-no-chord] [--soft-output]
 ```
 
 The script writes:
@@ -51,9 +50,9 @@ The script writes:
 - `--backbone-type` selects `crnn` or `conformer`.
 - The HCQT frontend is computed inside the inference script from raw audio.
 - `.lab` file is the MIREX-style files with start time, end time, and chord symbols for each predicted segments
-- `--soft-output` is false by default. If set to true, save a `.npz` file that contains keys `root`, `bass`, and `pc` storing frame-wise predictions (shape `12 x T`, unnormalized)
-- For `crnn`, the `.npz` file also contains `chord` with frame-wise chord logits (shape `192 x T`, unnormalized, 12 * 16 qualities can be found in [src/data/utils.py](src/data/utils.py))
-- Does not include `N` (no-chord) for now, coming soon...
+- `--soft-output` is false by default. If set to true, save a `.npz` file that contains keys `root`, `bass`, and `pc` storing frame-wise predictions (shape `12 x T`, or `13 x T` if `--include-no-chord` is used, unnormalized)
+- For `crnn`, the `.npz` file also contains `chord` with frame-wise chord logits (shape `192 x T`, or `193 x T` if `--include-no-chord` is used, unnormalized, 12 * 16 qualities can be found in [src/data/utils.py](src/data/utils.py))
+- No-chord (`N`) is supported through `include_no_chord` in the label config (default `false`). If enabled, `root` and `bass` have 13 classes (index 12 is `N`) and `chord` has an additional last class (`193 x T`).
 
 ## Datasets
 The following datasets are used for training the chord recognition module and therefore should not serve as test data:

@@ -313,8 +313,10 @@ class Hchord:
         # wrong style
         raise ValueError(f'style {style} not valid')
     
-    def encode(self, absolute=False, enforce_root=False, enforce_bass=False, include_extended=False):
+    def encode(self, absolute=False, enforce_root=False, enforce_bass=False, include_extended=False, include_no_chord=False):
         if self.root is None:
+            if include_no_chord:
+                return 12, np.zeros(12, dtype=int), 12
             return -1, np.zeros(12, dtype=int), -1
 
         m21_root = m21.pitch.Pitch(self.root.replace('b', '-'))

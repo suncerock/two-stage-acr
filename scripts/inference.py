@@ -94,6 +94,7 @@ def _build_model(
     backbone_type: str,
     chord_ckpt_path: Path,
     mpe_ckpt_path: Path,
+    include_no_chord: bool = False,
 ) -> ACRModel:
     class DummyLoss(nn.Module):
         def setup_loss(self, *args, **kwargs):
@@ -101,12 +102,12 @@ def _build_model(
 
     if backbone_type == "crnn":
         backbone = CRNN(input_channels=1, freq_dim=72, num_channels=32, num_rnn_layers=4, dropout=0.2)
-        label_config = ChordLabelConfig.mcfee_structured(harte_vocab="tetrads")
+        label_config = ChordLabelConfig.mcfee_structured(harte_vocab="tetrads", include_no_chord=include_no_chord)
         pitch_informed_rbp = False
         rbp_informed_chord = True
     elif backbone_type == "conformer":
         backbone = Conformer(freq_dim=72, hidden_size=192, num_hidden_layers=4, intermediate_size=768)
-        label_config = ChordLabelConfig.poltronieri_structured()
+        label_config = ChordLabelConfig.poltronieri_structured(include_no_chord=include_no_chord)
         pitch_informed_rbp = True
         rbp_informed_chord = False
     else:
@@ -182,7 +183,11 @@ def run_inference(
         vocab = model.label_config.harte_vocab
         chord_indices = np.argmax(predictions["chord"], axis=0)    # (T,)
         frame_chord_strings = [
-            convert_harte_index_to_hchord(int(idx), harte_vocab=vocab).export_string()
+            convert_harte_index_to_hchord(
+                int(idx),
+                harte_vocab=vocab,
+                include_no_chord=model.label_config.include_no_chord,
+            ).export_string()
             for idx in chord_indices
         ]
     
@@ -192,6 +197,7 @@ def run_inference(
             pitch_logits=1 / (1 + np.exp(-predictions["pc"].T)),  # sigmoid + transpose to (T, 12)
             bass_logits=predictions["bass"],
             pitch_threshold=DECODE_PITCH_THRESHOLD,
+            include_no_chord=model.label_config.include_no_chord,
         )
     
     else:
@@ -234,6 +240,11 @@ def main() -> None:
         help="Checkpoint to use (classical or pop).",
     )
     parser.add_argument(
+        "--include-no-chord",
+        action="store_true",
+        help="Predict an explicit no-chord (N) class. Uses the '<backbone>_<model-type>_withN.ckpt' checkpoint.",
+    )
+    parser.add_argument(
         "--mpe-ckpt-path",
         type=Path,
         default=DEFAULT_MPE_CKPT,
@@ -246,7 +257,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    chord_ckpt_path = Path(f"ckpt/{args.backbone_type}_{args.model_type}.ckpt")
+    suffix = "_withN" if args.include_no_chord else ""
+    chord_ckpt_path = Path(f"ckpt/{args.backbone_type}_{args.model_type}{suffix}.ckpt")
     if not chord_ckpt_path.exists():
         raise FileNotFoundError(f"Chord checkpoint not found: {chord_ckpt_path}. ")
     if not args.mpe_ckpt_path.exists():
@@ -261,6 +273,7 @@ def main() -> None:
         backbone_type=args.backbone_type,
         chord_ckpt_path=chord_ckpt_path,
         mpe_ckpt_path=args.mpe_ckpt_path,
+        include_no_chord=args.include_no_chord,
     )
 
     run_inference(

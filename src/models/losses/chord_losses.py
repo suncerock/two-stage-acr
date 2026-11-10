@@ -46,7 +46,7 @@ class ChordLoss(nn.Module):
         losses: Dict[str, torch.Tensor] = {}
 
         if self.label_config.require_rbp:
-            mask = targets["pitch"].sum(dim=-1) > 0
+            mask = (targets["pitch"] != -1).any(dim=-1)  # exclude frames without valid labels
             if mask.any():
                 losses["pitch"] = self.pitch_loss(
                     output["pitch"][mask], targets["pitch"][mask].float()

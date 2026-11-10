@@ -74,6 +74,7 @@ model:
   label_config:
     _target_: src.data.dataset.ChordLabelConfig.mcfee_structured
     harte_vocab: tetrads
+    include_no_chord: false  # true adds an explicit N class (root/bass index 12, last chord index)
 
   pitch_informed_rbp: false
   rbp_informed_chord: true
